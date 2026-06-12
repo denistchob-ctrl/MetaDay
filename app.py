@@ -1,15 +1,18 @@
 """
 Dashboard: Segmento EMPRESAS — Projeto Metaday 2025
 Recriação fiel do Power BI em Streamlit + Plotly
+v2 — auto-detecção de abas + logos + leitura automática da pasta
 """
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import numpy as np
-from datetime import datetime, date
+import os
+import base64
+import glob
+from pathlib import Path
 
 # ─────────────────────────────────────────────
 # CONFIGURAÇÃO DA PÁGINA
@@ -22,45 +25,67 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# PALETA DE CORES (fiel ao Power BI)
+# PALETA DE CORES
 # ─────────────────────────────────────────────
-COR_GOLD   = "#B8972E"
-COR_NAVY   = "#1F3864"
-COR_CINZA  = "#A0A0A0"
-COR_BG     = "#F0F2F5"
-COR_TEXTO  = "#1A1A2E"
+COR_GOLD  = "#B8972E"
+COR_NAVY  = "#1F3864"
+COR_CINZA = "#A0A0A0"
+COR_BG    = "#F0F2F5"
+COR_TEXTO = "#1A1A2E"
 TREEMAP_COLORS = px.colors.qualitative.Bold
+
+
+# ─────────────────────────────────────────────
+# UTILITÁRIOS DE IMAGEM
+# ─────────────────────────────────────────────
+def img_to_base64(path: str) -> str:
+    """Converte imagem local para base64 para embed no HTML."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        ext = Path(path).suffix.lower().lstrip(".")
+        mime = "png" if ext == "png" else "jpeg"
+        return f"data:image/{mime};base64,{base64.b64encode(data).decode()}"
+    except Exception:
+        return ""
+
+
+def _logo_path(filename: str) -> str:
+    """Procura o logo na pasta do script ou na raiz do projeto."""
+    base = Path(__file__).parent
+    for candidate in [base / filename, Path(filename), Path("assets") / filename]:
+        if candidate.exists():
+            return str(candidate)
+    return ""
+
 
 # ─────────────────────────────────────────────
 # CSS GLOBAL
 # ─────────────────────────────────────────────
 st.markdown(f"""
 <style>
-/* Fundo geral */
 .stApp {{ background-color: {COR_BG}; }}
 
-/* Título principal */
 h1.titulo-principal {{
     font-family: 'Georgia', serif;
-    font-size: 2.6rem;
+    font-size: 2.4rem;
     font-weight: 800;
     color: {COR_TEXTO};
     text-align: center;
     letter-spacing: 1px;
-    margin-bottom: 0.2rem;
+    margin: 0;
 }}
 
-/* Card KPI */
 .kpi-card {{
     background: white;
     border-radius: 12px;
-    padding: 18px 24px;
+    padding: 16px 20px;
     text-align: center;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     border-top: 4px solid {COR_GOLD};
 }}
 .kpi-label {{
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     font-style: italic;
     color: #666;
     font-weight: 600;
@@ -73,179 +98,298 @@ h1.titulo-principal {{
     line-height: 1.1;
 }}
 
-/* Título de seção */
 .section-title {{
     font-family: 'Georgia', serif;
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-style: italic;
     font-weight: 700;
     color: {COR_TEXTO};
-    margin: 12px 0 4px 0;
+    margin: 10px 0 2px 0;
 }}
 
-/* Sidebar */
-section[data-testid="stSidebar"] {{
-    background-color: #1A2744;
+/* Header row com logos */
+.header-row {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0 8px 0;
+    border-bottom: 2px solid #ddd;
+    margin-bottom: 12px;
 }}
-section[data-testid="stSidebar"] * {{
-    color: white !important;
-}}
-section[data-testid="stSidebar"] .stMultiSelect > div > div {{
-    background-color: #2a3a5c !important;
-}}
+.header-logo-left  {{ width: 80px; height: 80px; object-fit: contain; }}
+.header-logo-right {{ width: 60px; height: 60px; object-fit: contain; border-radius: 50%; }}
 
-/* Separador */
-hr.divisor {{
-    border: none;
-    border-top: 1px solid #ddd;
-    margin: 8px 0 16px 0;
-}}
+section[data-testid="stSidebar"] {{ background-color: #1A2744; }}
+section[data-testid="stSidebar"] * {{ color: white !important; }}
+section[data-testid="stSidebar"] .stMultiSelect > div > div {{ background-color: #2a3a5c !important; }}
 
-/* Tabela IBGE */
-.ibge-table {{
-    font-size: 0.82rem;
-}}
+div[data-testid="stFileUploader"] {{ display: none !important; }}
 </style>
 """, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────
-# CARREGAMENTO DE DADOS
+# DETECÇÃO AUTOMÁTICA DO EXCEL
 # ─────────────────────────────────────────────
-@st.cache_data
-def carregar_dados(arquivo):
-    """Carrega e une todas as abas do Excel, aplicando as transformações DAX."""
-    xls = pd.ExcelFile(arquivo)
+def encontrar_excel() -> str | None:
+    """Procura o primeiro .xlsx na pasta do script."""
+    base = Path(__file__).parent
+    arquivos = sorted(
+        list(base.glob("*.xlsx")) + list(base.glob("*.xls")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return str(arquivos[0]) if arquivos else None
 
-    # --- Tabelas principais ---
-    empresas  = pd.read_excel(xls, sheet_name="Empresas")
-    ramo      = pd.read_excel(xls, sheet_name="Ramo")        if "Ramo"         in xls.sheet_names else pd.DataFrame()
-    sub_ramos = pd.read_excel(xls, sheet_name="Sub-Ramos")   if "Sub-Ramos"    in xls.sheet_names else pd.DataFrame()
-    ram_princ = pd.read_excel(xls, sheet_name="Ramo Principal") if "Ramo Principal" in xls.sheet_names else pd.DataFrame()
-    bairros   = pd.read_excel(xls, sheet_name="Bairros")     if "Bairros"      in xls.sheet_names else pd.DataFrame()
-    distrito  = pd.read_excel(xls, sheet_name="Distrito")    if "Distrito"     in xls.sheet_names else pd.DataFrame()
-    porte_tb  = pd.read_excel(xls, sheet_name="Porte")       if "Porte"        in xls.sheet_names else pd.DataFrame()
-    horario   = pd.read_excel(xls, sheet_name="Horario")     if "Horario"      in xls.sheet_names else pd.DataFrame()
 
-    # --- Normaliza nomes de colunas ---
-    empresas.columns  = empresas.columns.str.strip()
+# ─────────────────────────────────────────────
+# DETECÇÃO INTELIGENTE DE ABAS
+# ─────────────────────────────────────────────
 
-    # ── Coluna de presença digital (site/rede social) ──
-    # Aceita várias possíveis nomenclaturas
-    for col in ["Site", "Presença Digital", "Presenca Digital", "PresencaDigital", "site"]:
-        if col in empresas.columns:
-            empresas["Presenca_Digital"] = empresas[col].apply(
-                lambda x: "SIM" if str(x).strip().upper() not in ["", "NAN", "NAO", "NÃO", "N", "NO", "FALSE", "0"] else "NÃO"
-            )
-            break
-    if "Presenca_Digital" not in empresas.columns:
-        empresas["Presenca_Digital"] = "NÃO"
+# Colunas-chave para identificar cada aba
+_ABA_CHAVES = {
+    "empresas":      ["cnpj", "bairro", "cep", "endereço", "endereco", "porte", "latitude", "lat"],
+    "ramo":          ["cnae", "ramo_id", "especialização", "especializacao", "sub-ramo_id", "subramo"],
+    "sub_ramos":     ["sub-ramo", "subramo", "sub_ramo"],
+    "ramo_principal":["ramo principal", "ramo_principal", "ramo_principal_id"],
+    "bairros":       ["bairro", "distrito"],
+    "distrito":      ["imóveis comerciais", "imoveis comerciais", "pop projetada", "amostra considerada"],
+    "porte":         ["porte"],
+    "horario":       ["expediente", "descrição", "descricao"],
+}
 
-    # ── Faixa etária da empresa (DAX equivalente) ──
-    if "Data Abertura" in empresas.columns:
-        empresas["Data Abertura"] = pd.to_datetime(empresas["Data Abertura"], errors="coerce")
+
+def _cols_lower(df: pd.DataFrame) -> list[str]:
+    return [str(c).strip().lower() for c in df.columns]
+
+
+def detectar_abas(xls: pd.ExcelFile) -> dict[str, pd.DataFrame]:
+    """
+    Lê cada aba e tenta classificá-la por conteúdo,
+    independentemente do nome.
+    """
+    resultado: dict[str, pd.DataFrame] = {k: pd.DataFrame() for k in _ABA_CHAVES}
+    nomes = xls.sheet_names
+
+    for nome in nomes:
+        try:
+            df = pd.read_excel(xls, sheet_name=nome, nrows=3)
+            cols = _cols_lower(df)
+        except Exception:
+            continue
+
+        melhor_cat  = None
+        melhor_score = 0
+        for cat, chaves in _ABA_CHAVES.items():
+            score = sum(any(chave in col for col in cols) for chave in chaves)
+            if score > melhor_score:
+                melhor_score = score
+                melhor_cat = cat
+
+        if melhor_cat and melhor_score >= 1:
+            if resultado[melhor_cat].empty:
+                resultado[melhor_cat] = pd.read_excel(xls, sheet_name=nome)
+
+    # Log das abas detectadas (visível só em dev)
+    detectadas = {k: v.shape for k, v in resultado.items() if not v.empty}
+    return resultado
+
+
+# ─────────────────────────────────────────────
+# TRANSFORMAÇÕES (equivalentes às medidas DAX)
+# ─────────────────────────────────────────────
+
+def _detectar_col(df: pd.DataFrame, candidatos: list[str]) -> str | None:
+    cols_lower = {c.strip().lower(): c for c in df.columns}
+    for c in candidatos:
+        if c.lower() in cols_lower:
+            return cols_lower[c.lower()]
+    return None
+
+
+def aplicar_transformacoes(empresas: pd.DataFrame,
+                            ramo: pd.DataFrame,
+                            sub_ramos: pd.DataFrame,
+                            ramo_principal: pd.DataFrame) -> pd.DataFrame:
+    df = empresas.copy()
+    df.columns = df.columns.str.strip()
+
+    # ── Presença Digital ──────────────────────────────────────────────
+    pres_col = _detectar_col(df, [
+        "site", "presença digital", "presenca digital", "presencadigital",
+        "rede social", "instagram", "facebook", "online"
+    ])
+    if pres_col:
+        df["Presenca_Digital"] = df[pres_col].apply(
+            lambda x: "NÃO" if str(x).strip().upper() in
+                      ["", "NAN", "NÃO", "NAO", "N", "NO", "FALSE", "0", "NONE", "-"] else "SIM"
+        )
+    else:
+        df["Presenca_Digital"] = "NÃO"
+
+    # ── Faixa etária ──────────────────────────────────────────────────
+    data_col = _detectar_col(df, ["data abertura", "data_abertura", "abertura", "fundacao", "fundação"])
+    if data_col:
+        df[data_col] = pd.to_datetime(df[data_col], errors="coerce", dayfirst=True)
         hoje = pd.Timestamp.today()
-        empresas["Anos_Existencia"] = ((hoje - empresas["Data Abertura"]).dt.days / 365.25)
-        def faixa_idade(anos):
-            if pd.isna(anos):    return "Sem dados"
-            elif anos <= 2:      return "0 a 2 anos"
-            elif anos <= 5:      return "3 a 5 anos"
-            elif anos <= 10:     return "6 a 10 anos"
-            elif anos <= 20:     return "11 a 20 anos"
-            else:                return "Mais de 20 anos"
-        empresas["Faixa_Idade"] = empresas["Anos_Existencia"].apply(faixa_idade)
-    else:
-        empresas["Faixa_Idade"] = "Sem dados"
+        df["Anos_Existencia"] = (hoje - df[data_col]).dt.days / 365.25
 
-    # ── Faixa de distância (DAX equivalente) ──
-    dist_col = next((c for c in ["Distancia (km)", "Distancia", "Distância (km)", "distancia_km"] if c in empresas.columns), None)
+        def faixa_idade(a):
+            if pd.isna(a):   return "Sem dados"
+            elif a <= 2:     return "0 a 2 anos"
+            elif a <= 5:     return "3 a 5 anos"
+            elif a <= 10:    return "6 a 10 anos"
+            elif a <= 20:    return "11 a 20 anos"
+            else:            return "Mais de 20 anos"
+        df["Faixa_Idade"] = df["Anos_Existencia"].apply(faixa_idade)
+    else:
+        df["Faixa_Idade"] = "Sem dados"
+
+    # ── Faixa de distância ────────────────────────────────────────────
+    dist_col = _detectar_col(df, [
+        "distancia (km)", "distância (km)", "distancia_km", "distancia",
+        "distância", "dist_km", "km"
+    ])
     if dist_col:
-        empresas["Dist_km"] = pd.to_numeric(empresas[dist_col], errors="coerce")
+        df["Dist_km"] = pd.to_numeric(df[dist_col], errors="coerce")
         def faixa_dist(d):
-            if pd.isna(d):    return "Sem dados"
-            elif d <= 2:      return "0 a 2km"
-            elif d <= 4:      return "3 a 4km"
-            elif d <= 7:      return "5 a 7km"
-            else:             return "Mais de 7km"
-        empresas["Faixa_Dist"] = empresas["Dist_km"].apply(faixa_dist)
+            if pd.isna(d):   return "Sem dados"
+            elif d <= 2:     return "0 a 2km"
+            elif d <= 4:     return "3 a 4km"
+            elif d <= 7:     return "5 a 7km"
+            else:            return "Mais de 7km"
+        df["Faixa_Dist"] = df["Dist_km"].apply(faixa_dist)
     else:
-        empresas["Faixa_Dist"] = "Sem dados"
+        df["Faixa_Dist"] = "Sem dados"
 
-    # ── Faixa de tempo (DAX equivalente) ──
-    tempo_col = next((c for c in ["Distância desde a FATEC", "Tempo", "tempo_min", "Tempo (min)"] if c in empresas.columns), None)
+    # ── Faixa de tempo ────────────────────────────────────────────────
+    tempo_col = _detectar_col(df, [
+        "distância desde a fatec", "distancia desde a fatec",
+        "tempo", "tempo (min)", "tempo_min", "minutos", "min"
+    ])
     if tempo_col:
-        empresas["Tempo_min"] = pd.to_numeric(empresas[tempo_col], errors="coerce")
+        df["Tempo_min"] = pd.to_numeric(df[tempo_col], errors="coerce")
         def faixa_tempo(t):
-            if pd.isna(t):    return "Sem dados"
-            elif t <= 5:      return "0 a 5 minutos"
-            elif t <= 10:     return "6 a 10 minutos"
-            elif t <= 20:     return "11 a 20 minutos"
-            else:             return "Mais de 20 minutos"
-        empresas["Faixa_Tempo"] = empresas["Tempo_min"].apply(faixa_tempo)
+            if pd.isna(t):   return "Sem dados"
+            elif t <= 5:     return "0 a 5 minutos"
+            elif t <= 10:    return "6 a 10 minutos"
+            elif t <= 20:    return "11 a 20 minutos"
+            else:            return "Mais de 20 minutos"
+        df["Faixa_Tempo"] = df["Tempo_min"].apply(faixa_tempo)
     else:
-        empresas["Faixa_Tempo"] = "Sem dados"
+        df["Faixa_Tempo"] = "Sem dados"
 
-    # ── Tem CNPJ? ──
-    if "CNPJ" in empresas.columns:
-        empresas["Tem_CNPJ"] = empresas["CNPJ"].apply(
-            lambda x: "SIM" if str(x).strip() not in ["", "nan", "NaN"] else "NÃO"
+    # ── Tem CNPJ ─────────────────────────────────────────────────────
+    cnpj_col = _detectar_col(df, ["cnpj"])
+    if cnpj_col:
+        df["Tem_CNPJ"] = df[cnpj_col].apply(
+            lambda x: "SIM" if str(x).strip() not in ["", "nan", "NaN", "-", "None"] else "NÃO"
         )
 
-    # ── Garante colunas essenciais com fallback ──
-    for col, default in [
-        ("Porte", "Não informado"),
-        ("Distrito", "Não informado"),
-        ("Bairro", "Não informado"),
-        ("Expediente", "HC"),
-    ]:
-        if col not in empresas.columns:
-            empresas[col] = default
+    # ── Fallbacks para colunas essenciais ────────────────────────────
+    for col, default in [("Porte","Não informado"),("Distrito","Não informado"),
+                          ("Bairro","Não informado"),("Expediente","HC")]:
+        if col not in df.columns:
+            # tenta detectar pelo nome similar
+            found = _detectar_col(df, [col.lower()])
+            if found:
+                df[col] = df[found]
+            else:
+                df[col] = default
 
-    # ── Joins com tabelas de ramo ──
-    ramo_col_emp = next((c for c in ["RAMO_ID", "Ramo_ID", "ramo_id"] if c in empresas.columns), None)
-    if not ramo.empty and ramo_col_emp:
-        ramo_id_col = next((c for c in ["RAMO_ID", "Ramo_ID"] if c in ramo.columns), ramo.columns[0])
-        ramo_nome   = next((c for c in ["ESPECIALIZAÇÃO / TIPO DE NEGÓ...", "Especializacao", "Ramo"] if c in ramo.columns), ramo.columns[-1])
-        ramo_map = ramo.set_index(ramo_id_col)[ramo_nome].to_dict()
-        empresas["Ramo_Nome"] = empresas[ramo_col_emp].map(ramo_map)
+    # ── Hierarquia de Ramos ───────────────────────────────────────────
+    df["Ramo_Nome"]      = "Não informado"
+    df["Sub_Ramo"]       = "Não informado"
+    df["Ramo_Principal"] = "Não informado"
 
-        ramo_princ_id = next((c for c in ["RAMO_PRINCIPAL_ID"] if c in ramo.columns), None)
-        if not ram_princ.empty and ramo_princ_id:
-            rp_id_col   = next((c for c in ["RAMO_PRINCIPAL_ID"] if c in ram_princ.columns), ram_princ.columns[0])
-            rp_nome_col = next((c for c in ["RAMO PRINCIPAL", "RamoPrincipal"] if c in ram_princ.columns), ram_princ.columns[1])
-            rp_map = ram_princ.set_index(rp_id_col)[rp_nome_col].to_dict()
-            empresas["Ramo_Principal"] = ramo[ramo_princ_id].map(rp_map).reindex(
-                empresas[ramo_col_emp].map(
-                    ramo.set_index(ramo_id_col)[ramo_princ_id].to_dict()
-                )
-            ).values
+    ramo_id_emp = _detectar_col(df, ["ramo_id", "ramo id"])
 
-        sub_id_col_ramo = next((c for c in ["SUB-RAMO_ID", "SubRamo_ID"] if c in ramo.columns), None)
-        if not sub_ramos.empty and sub_id_col_ramo:
-            sr_id  = next((c for c in ["SUB-RAMO_ID", "SubRamo_ID"] if c in sub_ramos.columns), sub_ramos.columns[0])
-            sr_nom = next((c for c in ["SUB-RAMO", "SubRamo"] if c in sub_ramos.columns), sub_ramos.columns[-1])
-            sr_map = sub_ramos.set_index(sr_id)[sr_nom].to_dict()
-            empresas["Sub_Ramo"] = ramo[sub_id_col_ramo].map(sr_map).reindex(
-                empresas[ramo_col_emp].map(
-                    ramo.set_index(ramo_id_col)[sub_id_col_ramo].to_dict()
-                )
-            ).values
+    if not ramo.empty and ramo_id_emp:
+        ramo.columns = ramo.columns.str.strip()
+        r_id  = _detectar_col(ramo, ["ramo_id", "ramo id"]) or ramo.columns[0]
+        r_nom = _detectar_col(ramo, ["especialização / tipo de negó", "especializacao",
+                                      "especializacao / tipo", "ramo", "nome"]) or ramo.columns[-1]
+        ramo_map = ramo.set_index(r_id)[r_nom].to_dict()
+        df["Ramo_Nome"] = df[ramo_id_emp].map(ramo_map).fillna("Não informado")
 
-    # Fallbacks para colunas de ramo
-    for col, default in [("Ramo_Nome", "Não informado"), ("Ramo_Principal", "Não informado"), ("Sub_Ramo", "Não informado")]:
-        if col not in empresas.columns:
-            empresas[col] = default
+        # Sub-Ramo
+        if not sub_ramos.empty:
+            sub_ramos.columns = sub_ramos.columns.str.strip()
+            sr_id  = _detectar_col(sub_ramos, ["sub-ramo_id","subramo_id","id"]) or sub_ramos.columns[0]
+            sr_nom = _detectar_col(sub_ramos, ["sub-ramo","subramo","nome"]) or sub_ramos.columns[-1]
+            r_sr_id = _detectar_col(ramo, ["sub-ramo_id","subramo_id"])
+            if r_sr_id:
+                sr_map = sub_ramos.set_index(sr_id)[sr_nom].to_dict()
+                df["Sub_Ramo"] = df[ramo_id_emp].map(
+                    ramo.set_index(r_id)[r_sr_id].to_dict()
+                ).map(sr_map).fillna("Não informado")
 
-    # ── Latitude / Longitude ──
-    lat_col = next((c for c in ["Latitude", "LAT", "lat"] if c in empresas.columns), None)
-    lon_col = next((c for c in ["Longitude", "LON", "lon", "LNG", "lng"] if c in empresas.columns), None)
-    if lat_col: empresas["Lat"] = pd.to_numeric(empresas[lat_col], errors="coerce")
-    if lon_col: empresas["Lon"] = pd.to_numeric(empresas[lon_col], errors="coerce")
+        # Ramo Principal
+        if not ramo_principal.empty:
+            ramo_principal.columns = ramo_principal.columns.str.strip()
+            rp_id  = _detectar_col(ramo_principal, ["ramo_principal_id","id"]) or ramo_principal.columns[0]
+            rp_nom = _detectar_col(ramo_principal, ["ramo principal","ramo_principal","nome"]) or ramo_principal.columns[1]
+            r_rp_id = _detectar_col(ramo, ["ramo_principal_id"])
+            if r_rp_id:
+                rp_map = ramo_principal.set_index(rp_id)[rp_nom].to_dict()
+                df["Ramo_Principal"] = df[ramo_id_emp].map(
+                    ramo.set_index(r_id)[r_rp_id].to_dict()
+                ).map(rp_map).fillna("Não informado")
 
-    return empresas, distrito
+    # ── Lat / Lon ─────────────────────────────────────────────────────
+    lat_col = _detectar_col(df, ["latitude","lat"])
+    lon_col = _detectar_col(df, ["longitude","lon","lng"])
+    if lat_col: df["Lat"] = pd.to_numeric(df[lat_col], errors="coerce")
+    if lon_col: df["Lon"] = pd.to_numeric(df[lon_col], errors="coerce")
+
+    return df
 
 
-def kpi_card(label, value):
+# ─────────────────────────────────────────────
+# CARREGAMENTO PRINCIPAL
+# ─────────────────────────────────────────────
+@st.cache_data(show_spinner="Carregando dados...")
+def carregar_dados(caminho: str):
+    xls   = pd.ExcelFile(caminho)
+    abas  = detectar_abas(xls)
+    empresas_raw = abas["empresas"]
+    if empresas_raw.empty:
+        st.error(f"Não foi possível detectar a aba de Empresas.\n"
+                 f"Abas encontradas: {xls.sheet_names}")
+        st.stop()
+
+    df = aplicar_transformacoes(
+        empresas_raw,
+        abas["ramo"],
+        abas["sub_ramos"],
+        abas["ramo_principal"],
+    )
+    return df, abas["distrito"]
+
+
+# ─────────────────────────────────────────────
+# COMPONENTES REUTILIZÁVEIS
+# ─────────────────────────────────────────────
+LOGO_EMP  = _logo_path("Empresa_Simbolo.png")
+LOGO_META = _logo_path("metaday_logo_sem_fundo.png")
+
+def render_header(titulo="Segmento: EMPRESAS"):
+    logo_emp_b64  = img_to_base64(LOGO_EMP)  if LOGO_EMP  else ""
+    logo_meta_b64 = img_to_base64(LOGO_META) if LOGO_META else ""
+
+    img_esq  = f'<img src="{logo_emp_b64}"  class="header-logo-left">'  if logo_emp_b64  else "🏢"
+    img_dir  = f'<img src="{logo_meta_b64}" class="header-logo-right">' if logo_meta_b64 else "⬤"
+
+    st.markdown(f"""
+    <div class="header-row">
+        <div>{img_esq}</div>
+        <h1 class="titulo-principal">{titulo}</h1>
+        <div>{img_dir}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def kpi_card(label: str, value) -> str:
     return f"""
     <div class="kpi-card">
         <div class="kpi-label">{label}</div>
@@ -253,446 +397,359 @@ def kpi_card(label, value):
     </div>"""
 
 
-# ─────────────────────────────────────────────
-# HEADER PADRÃO
-# ─────────────────────────────────────────────
-def render_header():
-    st.markdown('<h1 class="titulo-principal">Segmento: EMPRESAS</h1>', unsafe_allow_html=True)
-    st.markdown('<hr class="divisor">', unsafe_allow_html=True)
+def _chart_defaults(fig, height=260):
+    fig.update_layout(
+        height=height,
+        margin=dict(t=10, b=10, l=10, r=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
+def pizza_presenca(df, height=210):
+    pres = df["Presenca_Digital"].value_counts().reset_index()
+    pres.columns = ["Status", "Qtde"]
+    fig = px.pie(pres, names="Status", values="Qtde",
+                 color="Status",
+                 color_discrete_map={"SIM": COR_GOLD, "NÃO": "#D0D0D0"},
+                 hole=0.35)
+    fig.update_traces(textposition="outside", textinfo="label+value+percent", textfont_size=10)
+    return _chart_defaults(fig, height)
 
 
 # ═══════════════════════════════════════════════════════════════
-# PÁGINA 1 — VISÃO GERAL (KPIs + Mapa de calor por distrito)
+# PÁGINA 1 — VISÃO GERAL
 # ═══════════════════════════════════════════════════════════════
 def pagina_visao_geral(df, df_distrito):
     render_header()
 
-    total_emp   = len(df)
-    tot_dist    = df["Distrito"].nunique()
-    tot_espec   = df["Ramo_Nome"].nunique() if "Ramo_Nome" in df.columns else df["Sub_Ramo"].nunique()
+    total_emp  = len(df)
+    tot_dist   = df["Distrito"].nunique()
+    tot_espec  = df["Ramo_Nome"].nunique()
 
-    # KPIs
     c1, c2, c3 = st.columns(3)
-    with c1: st.markdown(kpi_card("Empresas Catalogadas", f"{total_emp:,}".replace(",", ".")), unsafe_allow_html=True)
-    with c2: st.markdown(kpi_card("Distritos Considerados", tot_dist), unsafe_allow_html=True)
-    with c3: st.markdown(kpi_card("Especializações Identificadas", tot_espec), unsafe_allow_html=True)
+    for col, label, val in [
+        (c1, "Empresas Catalogadas",       f"{total_emp:,}".replace(",",".")),
+        (c2, "Distritos Considerados",     str(tot_dist)),
+        (c3, "Especializações Identificadas", str(tot_espec)),
+    ]:
+        with col:
+            st.markdown(kpi_card(label, val), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-
     col_esq, col_dir = st.columns([1, 2.5])
 
     with col_esq:
-        # Presença Digital — Pizza
         st.markdown('<div class="section-title">Presença Digital</div>', unsafe_allow_html=True)
-        pres = df["Presenca_Digital"].value_counts().reset_index()
-        pres.columns = ["Status", "Qtde"]
-        fig_pres = px.pie(pres, names="Status", values="Qtde",
-                          color="Status",
-                          color_discrete_map={"SIM": COR_GOLD, "NÃO": "#D0D0D0"},
-                          hole=0.35)
-        fig_pres.update_traces(textposition="outside", textinfo="label+value+percent",
-                                textfont_size=11)
-        fig_pres.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10),
-                               height=230, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_pres, use_container_width=True)
+        st.plotly_chart(pizza_presenca(df, 220), use_container_width=True)
 
-        # Porte — Barras horizontais
         st.markdown('<div class="section-title">Porte das Empresas</div>', unsafe_allow_html=True)
-        porte_order = ["Pequeno", "Médio", "Grande"]
-        porte = df["Porte"].value_counts().reindex(porte_order).dropna().reset_index()
+        porte = (df["Porte"].value_counts()
+                   .reindex(["Pequeno","Médio","Grande"])
+                   .dropna().reset_index())
         porte.columns = ["Porte", "Qtde"]
-        colors_porte = {
-            "Pequeno": COR_GOLD,
-            "Médio":   COR_NAVY,
-            "Grande":  COR_CINZA,
-        }
-        fig_porte = px.bar(porte, y="Porte", x="Qtde", orientation="h",
-                           color="Porte",
-                           color_discrete_map=colors_porte,
-                           text="Qtde")
-        fig_porte.update_traces(textposition="inside", textfont_size=13, textfont_color="white")
-        fig_porte.update_layout(
-            showlegend=False, height=200,
-            margin=dict(t=5, b=5, l=10, r=10),
-            xaxis=dict(visible=False), yaxis=dict(title=""),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-        )
-        st.plotly_chart(fig_porte, use_container_width=True)
+        cor_porte = {"Pequeno": COR_GOLD, "Médio": COR_NAVY, "Grande": COR_CINZA}
+        fig_p = px.bar(porte, y="Porte", x="Qtde", orientation="h",
+                       color="Porte", color_discrete_map=cor_porte, text="Qtde")
+        fig_p.update_traces(textposition="inside", textfont_size=13, textfont_color="white")
+        fig_p.update_layout(showlegend=False, xaxis=dict(visible=False), yaxis_title="")
+        st.plotly_chart(_chart_defaults(fig_p, 180), use_container_width=True)
 
     with col_dir:
-        # Mapa de bolhas por distrito
-        st.markdown('<div class="section-title">Distribuição Geográfica por Distrito</div>', unsafe_allow_html=True)
-        if "Lat" in df.columns and "Lon" in df.columns and df["Lat"].notna().sum() > 10:
-            df_map = df.dropna(subset=["Lat", "Lon"])
-            fig_map = px.scatter_mapbox(
-                df_map, lat="Lat", lon="Lon",
-                color="Distrito",
-                size_max=12,
-                hover_name=df_map.columns[0] if df_map.shape[1] > 0 else None,
-                hover_data={"Lat": False, "Lon": False, "Porte": True, "Distrito": True},
-                zoom=12, height=430,
+        st.markdown('<div class="section-title">Distribuição Geográfica por Distrito</div>',
+                    unsafe_allow_html=True)
+        tem_coords = ("Lat" in df.columns and "Lon" in df.columns
+                      and df["Lat"].notna().sum() > 10)
+        if tem_coords:
+            df_m = df.dropna(subset=["Lat","Lon"])
+            fig_m = px.scatter_mapbox(
+                df_m, lat="Lat", lon="Lon",
+                color="Distrito", size_max=12, zoom=12, height=440,
                 mapbox_style="open-street-map",
                 color_discrete_sequence=px.colors.qualitative.Bold,
+                hover_data={"Lat":False,"Lon":False,"Porte":True,"Distrito":True},
             )
-            fig_map.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False,
-                                  paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_map, use_container_width=True)
+            fig_m.update_layout(margin=dict(t=0,b=0,l=0,r=0), showlegend=False,
+                                 paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_m, use_container_width=True)
         else:
-            # Fallback: bolhas por quantidade de empresas por distrito
-            dist_count = df.groupby("Distrito").size().reset_index(name="Qtde")
-            dist_count = dist_count.sort_values("Qtde", ascending=False)
-            fig_bar = px.bar(dist_count, x="Distrito", y="Qtde",
-                             text="Qtde",
-                             color="Qtde",
-                             color_continuous_scale=[[0, "#D4B44A"], [1, COR_NAVY]])
-            fig_bar.update_traces(textposition="outside")
-            fig_bar.update_layout(
-                height=430, showlegend=False,
-                xaxis_title="", yaxis_title="Empresas",
-                coloraxis_showscale=False,
-                margin=dict(t=10, b=10, l=10, r=10),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
+            dist_c = df.groupby("Distrito").size().reset_index(name="Qtde").sort_values("Qtde",ascending=False)
+            fig_b = px.bar(dist_c, x="Distrito", y="Qtde", text="Qtde",
+                           color="Qtde",
+                           color_continuous_scale=[[0,COR_GOLD],[1,COR_NAVY]])
+            fig_b.update_traces(textposition="outside")
+            fig_b.update_layout(coloraxis_showscale=False,
+                                 xaxis_title="", yaxis_title="Empresas")
+            st.plotly_chart(_chart_defaults(fig_b, 440), use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════
-# PÁGINA 2 — DISTRITOS (Treemap + Tempo de Existência + Ramo)
+# PÁGINA 2 — DISTRITOS & RAMOS
 # ═══════════════════════════════════════════════════════════════
 def pagina_distritos(df):
     render_header()
-
     col_esq, col_dir = st.columns([1, 2.5])
 
     with col_esq:
         st.markdown('<div class="section-title">Presença Digital</div>', unsafe_allow_html=True)
-        pres = df["Presenca_Digital"].value_counts().reset_index()
-        pres.columns = ["Status", "Qtde"]
-        fig_pres = px.pie(pres, names="Status", values="Qtde",
-                          color="Status",
-                          color_discrete_map={"SIM": COR_GOLD, "NÃO": "#D0D0D0"},
-                          hole=0.35)
-        fig_pres.update_traces(textposition="outside", textinfo="label+value+percent", textfont_size=10)
-        fig_pres.update_layout(showlegend=False, margin=dict(t=5, b=5, l=5, r=5), height=200,
-                               paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_pres, use_container_width=True)
+        st.plotly_chart(pizza_presenca(df, 200), use_container_width=True)
 
     with col_dir:
-        # Treemap por distrito
         st.markdown('<div class="section-title">Empresas por Distrito</div>', unsafe_allow_html=True)
-        dist_count = df.groupby("Distrito").size().reset_index(name="Qtde")
-        fig_tree = px.treemap(dist_count, path=["Distrito"], values="Qtde",
-                              color="Qtde",
-                              color_continuous_scale=[
-                                  [0, "#1a237e"], [0.15, "#283593"], [0.3, "#5c6bc0"],
-                                  [0.45, "#00897b"], [0.6, "#43a047"], [0.75, "#e53935"],
-                                  [0.9, "#8e24aa"], [1.0, "#00acc1"]
-                              ])
-        fig_tree.update_traces(
-            textinfo="label+value",
-            textfont_size=13,
-            textposition="bottom left",
-        )
-        fig_tree.update_layout(
-            height=290, margin=dict(t=5, b=5, l=5, r=5),
-            coloraxis_showscale=False,
-            paper_bgcolor="rgba(0,0,0,0)"
-        )
-        st.plotly_chart(fig_tree, use_container_width=True)
+        dist_c = df.groupby("Distrito").size().reset_index(name="Qtde")
+        fig_t = px.treemap(dist_c, path=["Distrito"], values="Qtde",
+                           color="Qtde",
+                           color_continuous_scale=[
+                               [0,"#1a237e"],[.15,"#283593"],[.3,"#5c6bc0"],
+                               [.45,"#00897b"],[.6,"#43a047"],[.75,"#e53935"],
+                               [.9,"#8e24aa"],[1,"#00acc1"],
+                           ])
+        fig_t.update_traces(textinfo="label+value", textfont_size=13, textposition="bottom left")
+        fig_t.update_layout(coloraxis_showscale=False, margin=dict(t=5,b=5,l=5,r=5),
+                             height=280, paper_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_t, use_container_width=True)
 
-    # Linha inferior: Tempo Existência + Quantidade por Ramo
     c1, c2 = st.columns(2)
-
     with c1:
         st.markdown('<div class="section-title">Tempo de Existência</div>', unsafe_allow_html=True)
-        ordem = ["Mais de 20 anos", "0 a 2 anos", "11 a 20 anos", "6 a 10 anos", "3 a 5 anos", "Sem dados"]
-        faixa = df["Faixa_Idade"].value_counts().reindex(ordem).dropna().reset_index()
-        faixa.columns = ["Faixa", "Qtde"]
-        fig_faixa = px.bar(faixa, y="Faixa", x="Qtde", orientation="h",
-                           text="Qtde",
-                           color="Qtde",
-                           color_continuous_scale=[[0, "#90CAF9"], [0.5, "#1565C0"], [1, COR_NAVY]])
-        fig_faixa.update_traces(textposition="outside", textfont_size=12)
-        fig_faixa.update_layout(
-            height=280, showlegend=False,
-            xaxis=dict(visible=False), yaxis=dict(title=""),
-            coloraxis_showscale=False,
-            margin=dict(t=5, b=5, l=5, r=5),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-        )
-        st.plotly_chart(fig_faixa, use_container_width=True)
+        ordem = ["Mais de 20 anos","0 a 2 anos","11 a 20 anos","6 a 10 anos","3 a 5 anos","Sem dados"]
+        fi = df["Faixa_Idade"].value_counts().reindex(ordem).dropna().reset_index()
+        fi.columns = ["Faixa","Qtde"]
+        fig_fi = px.bar(fi, y="Faixa", x="Qtde", orientation="h", text="Qtde",
+                        color="Qtde",
+                        color_continuous_scale=[[0,"#90CAF9"],[.5,"#1565C0"],[1,COR_NAVY]])
+        fig_fi.update_traces(textposition="outside", textfont_size=12)
+        fig_fi.update_layout(coloraxis_showscale=False,
+                              xaxis=dict(visible=False), yaxis_title="", showlegend=False)
+        st.plotly_chart(_chart_defaults(fig_fi, 270), use_container_width=True)
 
     with c2:
         st.markdown('<div class="section-title">Quantidade por Ramo</div>', unsafe_allow_html=True)
-        ramo_count = df["Ramo_Principal"].value_counts().reset_index()
-        ramo_count.columns = ["Ramo", "Qtde"]
-        ramo_count = ramo_count[ramo_count["Ramo"] != "Não informado"].head(10)
-        fig_ramo = px.bar(ramo_count, x="Ramo", y="Qtde",
-                          text="Qtde",
-                          color_discrete_sequence=[COR_GOLD])
-        fig_ramo.update_traces(textposition="outside", textfont_size=11)
-        fig_ramo.update_layout(
-            height=280, showlegend=False,
-            xaxis=dict(title="", tickangle=-30, tickfont_size=10),
-            yaxis=dict(visible=False),
-            margin=dict(t=20, b=5, l=5, r=5),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-        )
-        st.plotly_chart(fig_ramo, use_container_width=True)
+        ramo_c = (df["Ramo_Principal"].value_counts()
+                    .reset_index()
+                    .rename(columns={"index":"Ramo","Ramo_Principal":"Qtde",
+                                     "count":"Qtde","Ramo_Principal":"Ramo"})
+                  )
+        # garante colunas corretas independente da versão do pandas
+        ramo_c.columns = ["Ramo","Qtde"]
+        ramo_c = ramo_c[ramo_c["Ramo"] != "Não informado"].head(10)
+        fig_r = px.bar(ramo_c, x="Ramo", y="Qtde", text="Qtde",
+                       color_discrete_sequence=[COR_GOLD])
+        fig_r.update_traces(textposition="outside", textfont_size=11)
+        fig_r.update_layout(xaxis=dict(title="", tickangle=-30, tickfont_size=10),
+                             yaxis=dict(visible=False), showlegend=False)
+        st.plotly_chart(_chart_defaults(fig_r, 270), use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════
-# PÁGINA 3 — FATEC (Tempo/Distância + Sub-Ramos)
+# PÁGINA 3 — FATEC & SUB-RAMOS
 # ═══════════════════════════════════════════════════════════════
 def pagina_fatec(df):
     render_header()
-
-    # Linha superior: Tempo e Distância
     c1, c2 = st.columns(2)
+
     with c1:
         st.markdown('<div class="section-title">Tempo da FATEC até a Empresa</div>', unsafe_allow_html=True)
-        ordem_tempo = ["11 a 20 minutos", "6 a 10 minutos", "0 a 5 minutos", "Mais de 20 minutos", "Sem dados"]
-        tempo_c = df["Faixa_Tempo"].value_counts().reindex(ordem_tempo).dropna().reset_index()
-        tempo_c.columns = ["Faixa", "Qtde"]
-        fig_tempo = px.bar(tempo_c, y="Faixa", x="Qtde", orientation="h",
-                           text="Qtde",
-                           color_discrete_sequence=[COR_GOLD])
-        fig_tempo.update_traces(textposition="outside", textfont_size=12)
-        fig_tempo.update_layout(
-            height=230, showlegend=False,
-            xaxis=dict(visible=False), yaxis=dict(title=""),
-            margin=dict(t=5, b=5, l=5, r=5),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-        )
-        st.plotly_chart(fig_tempo, use_container_width=True)
+        ordem_t = ["11 a 20 minutos","6 a 10 minutos","0 a 5 minutos","Mais de 20 minutos","Sem dados"]
+        tc = df["Faixa_Tempo"].value_counts().reindex(ordem_t).dropna().reset_index()
+        tc.columns = ["Faixa","Qtde"]
+        fig_tc = px.bar(tc, y="Faixa", x="Qtde", orientation="h",
+                        text="Qtde", color_discrete_sequence=[COR_GOLD])
+        fig_tc.update_traces(textposition="outside", textfont_size=12)
+        fig_tc.update_layout(xaxis=dict(visible=False), yaxis_title="", showlegend=False)
+        st.plotly_chart(_chart_defaults(fig_tc, 220), use_container_width=True)
 
     with c2:
         st.markdown('<div class="section-title">Distância da FATEC até a Empresa</div>', unsafe_allow_html=True)
-        ordem_dist = ["3 a 4km", "0 a 2km", "5 a 7km", "Mais de 7km", "Sem dados"]
-        dist_c = df["Faixa_Dist"].value_counts().reindex(ordem_dist).dropna().reset_index()
-        dist_c.columns = ["Faixa", "Qtde"]
-        fig_dist = px.bar(dist_c, x="Faixa", y="Qtde",
-                          text="Qtde",
-                          color="Qtde",
-                          color_continuous_scale=[[0, "#E0D0A0"], [1, COR_GOLD]])
-        fig_dist.update_traces(textposition="outside", textfont_size=12)
-        fig_dist.update_layout(
-            height=230, showlegend=False,
-            xaxis=dict(title=""), yaxis=dict(visible=False),
-            coloraxis_showscale=False,
-            margin=dict(t=20, b=5, l=5, r=5),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-        )
-        st.plotly_chart(fig_dist, use_container_width=True)
+        ordem_d = ["3 a 4km","0 a 2km","5 a 7km","Mais de 7km","Sem dados"]
+        dc = df["Faixa_Dist"].value_counts().reindex(ordem_d).dropna().reset_index()
+        dc.columns = ["Faixa","Qtde"]
+        fig_dc = px.bar(dc, x="Faixa", y="Qtde", text="Qtde",
+                        color="Qtde",
+                        color_continuous_scale=[[0,"#E0D0A0"],[1,COR_GOLD]])
+        fig_dc.update_traces(textposition="outside", textfont_size=12)
+        fig_dc.update_layout(coloraxis_showscale=False,
+                              xaxis_title="", yaxis=dict(visible=False), showlegend=False)
+        st.plotly_chart(_chart_defaults(fig_dc, 220), use_container_width=True)
 
-    # Linha inferior: Filtro Ramo + Treemap Sub-Ramos
-    col_filtro, col_tree = st.columns([1, 3])
-
-    with col_filtro:
+    col_f, col_t = st.columns([1, 3])
+    with col_f:
         st.markdown('<div class="section-title">Ramo de Atividade</div>', unsafe_allow_html=True)
-        ramos_disp = sorted(df["Ramo_Principal"].dropna().unique().tolist())
-        ramos_disp = [r for r in ramos_disp if r != "Não informado"]
-        ramos_sel  = st.multiselect("", ramos_disp, default=[], label_visibility="collapsed")
+        ramos_disp = sorted([r for r in df["Ramo_Principal"].dropna().unique()
+                             if r != "Não informado"])
+        ramos_sel = st.multiselect("", ramos_disp, default=[], label_visibility="collapsed")
 
-    with col_tree:
-        st.markdown('<div class="section-title">Sub-Divisão dos Ramos de Atividade</div>', unsafe_allow_html=True)
+    with col_t:
+        st.markdown('<div class="section-title">Sub-Divisão dos Ramos de Atividade</div>',
+                    unsafe_allow_html=True)
         df_f = df[df["Ramo_Principal"].isin(ramos_sel)] if ramos_sel else df
-        sub_count = df_f.groupby(["Ramo_Principal", "Sub_Ramo"]).size().reset_index(name="Qtde")
-        sub_count  = sub_count[(sub_count["Sub_Ramo"] != "Não informado") & (sub_count["Qtde"] > 0)]
-        if not sub_count.empty:
-            fig_sub = px.treemap(sub_count, path=["Ramo_Principal", "Sub_Ramo"],
-                                 values="Qtde",
-                                 color="Ramo_Principal",
-                                 color_discrete_sequence=TREEMAP_COLORS)
-            fig_sub.update_traces(textinfo="label+value", textfont_size=11, textposition="bottom left")
-            fig_sub.update_layout(
-                height=380, margin=dict(t=5, b=5, l=5, r=5),
-                paper_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig_sub, use_container_width=True)
+        sub_c = (df_f.groupby(["Ramo_Principal","Sub_Ramo"])
+                      .size().reset_index(name="Qtde")
+                      .query("Sub_Ramo != 'Não informado' and Qtde > 0"))
+        if not sub_c.empty:
+            fig_s = px.treemap(sub_c, path=["Ramo_Principal","Sub_Ramo"],
+                               values="Qtde", color="Ramo_Principal",
+                               color_discrete_sequence=TREEMAP_COLORS)
+            fig_s.update_traces(textinfo="label+value", textfont_size=11,
+                                 textposition="bottom left")
+            fig_s.update_layout(height=370, margin=dict(t=5,b=5,l=5,r=5),
+                                 paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_s, use_container_width=True)
         else:
             st.info("Selecione um ou mais ramos para ver a sub-divisão.")
 
 
 # ═══════════════════════════════════════════════════════════════
-# PÁGINA 4 — MAPA SEGMENTADO POR RAMO
+# PÁGINA 4 — MAPA POR SEGMENTO
 # ═══════════════════════════════════════════════════════════════
 def pagina_mapa_ramos(df):
     render_header()
+    col_f, col_m = st.columns([1, 3])
 
-    col_filtro, col_mapa = st.columns([1, 3])
-
-    with col_filtro:
+    with col_f:
         st.markdown('<div class="section-title">Segmentação dos Ramos</div>', unsafe_allow_html=True)
-        sub_ramos_disp = sorted(df["Sub_Ramo"].dropna().unique().tolist())
-        sub_ramos_disp = [s for s in sub_ramos_disp if s != "Não informado"]
-        sel_sub = st.multiselect("", sub_ramos_disp, default=[], label_visibility="collapsed",
-                                 key="sel_sub_mapa")
+        subs = sorted([s for s in df["Sub_Ramo"].dropna().unique() if s != "Não informado"])
+        sel  = st.multiselect("", subs, default=[], label_visibility="collapsed", key="mapa_sub")
 
-    with col_mapa:
-        df_f = df[df["Sub_Ramo"].isin(sel_sub)] if sel_sub else df
-        if "Lat" in df_f.columns and "Lon" in df_f.columns and df_f["Lat"].notna().sum() > 5:
-            df_map = df_f.dropna(subset=["Lat", "Lon"])
-            fig_map = px.scatter_mapbox(
-                df_map, lat="Lat", lon="Lon",
-                color="Sub_Ramo",
-                hover_data={"Lat": False, "Lon": False, "Porte": True, "Distrito": True, "Sub_Ramo": True},
-                zoom=12, height=550,
-                mapbox_style="open-street-map",
+    with col_m:
+        df_f = df[df["Sub_Ramo"].isin(sel)] if sel else df
+        tem_coords = ("Lat" in df_f.columns and "Lon" in df_f.columns
+                      and df_f["Lat"].notna().sum() > 5)
+        if tem_coords:
+            df_m = df_f.dropna(subset=["Lat","Lon"])
+            fig_m = px.scatter_mapbox(
+                df_m, lat="Lat", lon="Lon", color="Sub_Ramo",
+                hover_data={"Lat":False,"Lon":False,"Porte":True,"Distrito":True,"Sub_Ramo":True},
+                zoom=12, height=560, mapbox_style="open-street-map",
                 color_discrete_sequence=px.colors.qualitative.Alphabet,
             )
-            fig_map.update_layout(
-                margin=dict(t=0, b=0, l=0, r=0),
-                legend=dict(title="Sub-Ramo", font_size=10, x=1.0),
-                paper_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig_map, use_container_width=True)
+            fig_m.update_layout(margin=dict(t=0,b=0,l=0,r=0),
+                                 legend=dict(title="Sub-Ramo",font_size=10),
+                                 paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_m, use_container_width=True)
         else:
-            # Fallback: barras de sub-ramo
-            sub_count = df_f["Sub_Ramo"].value_counts().head(20).reset_index()
-            sub_count.columns = ["Sub_Ramo", "Qtde"]
-            sub_count = sub_count[sub_count["Sub_Ramo"] != "Não informado"]
-            fig_sub = px.bar(sub_count, x="Qtde", y="Sub_Ramo", orientation="h",
-                             text="Qtde",
-                             color="Sub_Ramo",
-                             color_discrete_sequence=px.colors.qualitative.Bold)
-            fig_sub.update_traces(textposition="outside", textfont_size=11)
-            fig_sub.update_layout(
-                height=550, showlegend=False,
-                xaxis=dict(visible=False), yaxis=dict(title=""),
-                margin=dict(t=5, b=5, l=5, r=5),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig_sub, use_container_width=True)
+            sub_c = (df_f["Sub_Ramo"].value_counts().head(20).reset_index()
+                       .rename(columns={"index":"Sub_Ramo","Sub_Ramo":"Qtde",
+                                        "count":"Qtde"}))
+            sub_c.columns = ["Sub_Ramo","Qtde"]
+            sub_c = sub_c[sub_c["Sub_Ramo"] != "Não informado"]
+            fig_b = px.bar(sub_c, x="Qtde", y="Sub_Ramo", orientation="h",
+                           text="Qtde", color="Sub_Ramo",
+                           color_discrete_sequence=px.colors.qualitative.Bold)
+            fig_b.update_traces(textposition="outside")
+            fig_b.update_layout(showlegend=False,
+                                 xaxis=dict(visible=False), yaxis_title="")
+            st.plotly_chart(_chart_defaults(fig_b, 560), use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════
-# PÁGINA 5 — DISTRITOS POR SEGMENTO (Treemap filtrado)
+# PÁGINA 5 — DISTRITOS POR SEGMENTO
 # ═══════════════════════════════════════════════════════════════
 def pagina_distritos_segmento(df):
     render_header()
+    col_f, col_t = st.columns([1, 3])
 
-    col_filtro, col_tree = st.columns([1, 3])
-
-    with col_filtro:
+    with col_f:
         st.markdown('<div class="section-title">Segmentação dos Ramos</div>', unsafe_allow_html=True)
-        sub_ramos_disp = sorted(df["Sub_Ramo"].dropna().unique().tolist())
-        sub_ramos_disp = [s for s in sub_ramos_disp if s != "Não informado"]
-        sel_sub = st.multiselect("", sub_ramos_disp, default=[], label_visibility="collapsed",
-                                 key="sel_sub_dist")
+        subs = sorted([s for s in df["Sub_Ramo"].dropna().unique() if s != "Não informado"])
+        sel  = st.multiselect("", subs, default=[], label_visibility="collapsed", key="dist_sub")
 
-    with col_tree:
-        df_f = df[df["Sub_Ramo"].isin(sel_sub)] if sel_sub else df
-        st.markdown('<div class="section-title">Distritos que têm os Segmentos selecionados</div>', unsafe_allow_html=True)
-        dist_count = df_f.groupby("Distrito").size().reset_index(name="Qtde")
-        if not dist_count.empty:
-            fig_tree = px.treemap(dist_count, path=["Distrito"], values="Qtde",
-                                  color="Qtde",
-                                  color_continuous_scale=[
-                                      [0, "#1a237e"], [0.15, "#283593"], [0.3, "#5c6bc0"],
-                                      [0.45, "#00897b"], [0.6, "#43a047"], [0.75, "#e53935"],
-                                      [0.9, "#8e24aa"], [1.0, "#00acc1"]
-                                  ])
-            fig_tree.update_traces(
-                textinfo="label+value", textfont_size=14, textposition="bottom left"
-            )
-            fig_tree.update_layout(
-                height=560, margin=dict(t=5, b=5, l=5, r=5),
-                coloraxis_showscale=False,
-                paper_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig_tree, use_container_width=True)
+    with col_t:
+        df_f  = df[df["Sub_Ramo"].isin(sel)] if sel else df
+        st.markdown('<div class="section-title">Distritos que têm os Segmentos selecionados</div>',
+                    unsafe_allow_html=True)
+        dist_c = df_f.groupby("Distrito").size().reset_index(name="Qtde")
+        if not dist_c.empty:
+            fig_t = px.treemap(dist_c, path=["Distrito"], values="Qtde",
+                               color="Qtde",
+                               color_continuous_scale=[
+                                   [0,"#1a237e"],[.15,"#283593"],[.3,"#5c6bc0"],
+                                   [.45,"#00897b"],[.6,"#43a047"],[.75,"#e53935"],
+                                   [.9,"#8e24aa"],[1,"#00acc1"],
+                               ])
+            fig_t.update_traces(textinfo="label+value", textfont_size=14,
+                                 textposition="bottom left")
+            fig_t.update_layout(height=560, margin=dict(t=5,b=5,l=5,r=5),
+                                 coloraxis_showscale=False,
+                                 paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_t, use_container_width=True)
         else:
             st.info("Nenhuma empresa encontrada com o filtro atual.")
 
 
 # ═══════════════════════════════════════════════════════════════
-# PÁGINA 6 — DADOS IBGE / CENSO + GRÁFICOS DE PERFIL
+# PÁGINA 6 — IBGE / PERFIL
 # ═══════════════════════════════════════════════════════════════
 def pagina_ibge(df, df_distrito):
     render_header()
-
-    # Gráficos de perfil no topo
     c1, c2, c3 = st.columns(3)
 
     with c1:
         st.markdown('<div class="section-title">Porte das Empresas</div>', unsafe_allow_html=True)
-        porte_order = ["Pequeno", "Médio", "Grande"]
-        porte = df["Porte"].value_counts().reindex(porte_order).dropna().reset_index()
-        porte.columns = ["Porte", "Qtde"]
-        colors_porte = {"Pequeno": COR_GOLD, "Médio": COR_NAVY, "Grande": COR_CINZA}
-        fig_porte = px.bar(porte, x="Porte", y="Qtde", text="Qtde",
-                           color="Porte", color_discrete_map=colors_porte)
-        fig_porte.update_traces(textposition="outside", textfont_size=12)
-        fig_porte.update_layout(height=220, showlegend=False,
-                                xaxis_title="Porte", yaxis=dict(visible=False),
-                                margin=dict(t=10, b=5, l=5, r=5),
-                                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_porte, use_container_width=True)
+        porte = (df["Porte"].value_counts()
+                   .reindex(["Pequeno","Médio","Grande"]).dropna().reset_index())
+        porte.columns = ["Porte","Qtde"]
+        cor_p = {"Pequeno":COR_GOLD,"Médio":COR_NAVY,"Grande":COR_CINZA}
+        fig_p = px.bar(porte, x="Porte", y="Qtde", text="Qtde",
+                       color="Porte", color_discrete_map=cor_p)
+        fig_p.update_traces(textposition="outside")
+        fig_p.update_layout(showlegend=False,
+                             xaxis_title="Porte", yaxis=dict(visible=False))
+        st.plotly_chart(_chart_defaults(fig_p, 220), use_container_width=True)
 
     with c2:
         st.markdown('<div class="section-title">Presença Digital</div>', unsafe_allow_html=True)
-        pres = df["Presenca_Digital"].value_counts().reset_index()
-        pres.columns = ["Status", "Qtde"]
-        fig_pres = px.pie(pres, names="Status", values="Qtde",
-                          color="Status",
-                          color_discrete_map={"SIM": COR_GOLD, "NÃO": "#D0D0D0"},
-                          hole=0.3)
-        fig_pres.update_traces(textposition="outside", textinfo="label+value+percent", textfont_size=10)
-        fig_pres.update_layout(showlegend=False, margin=dict(t=5, b=5, l=5, r=5), height=220,
-                               paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_pres, use_container_width=True)
+        st.plotly_chart(pizza_presenca(df, 220), use_container_width=True)
 
     with c3:
         st.markdown('<div class="section-title">Expediente</div>', unsafe_allow_html=True)
-        exp_count = df["Expediente"].value_counts().reset_index()
-        exp_count.columns = ["Tipo", "Qtde"]
-        fig_exp = px.pie(exp_count, names="Tipo", values="Qtde",
-                         color_discrete_sequence=[COR_NAVY, COR_GOLD, COR_CINZA],
-                         hole=0.3)
-        fig_exp.update_traces(textposition="outside", textinfo="label+percent", textfont_size=10)
-        fig_exp.update_layout(showlegend=False, margin=dict(t=5, b=5, l=5, r=5), height=220,
-                               paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(fig_exp, use_container_width=True)
+        exp_c = df["Expediente"].value_counts().reset_index()
+        exp_c.columns = ["Tipo","Qtde"]
+        fig_e = px.pie(exp_c, names="Tipo", values="Qtde",
+                       color_discrete_sequence=[COR_NAVY, COR_GOLD, COR_CINZA], hole=0.3)
+        fig_e.update_traces(textposition="outside", textinfo="label+percent", textfont_size=10)
+        fig_e.update_layout(showlegend=False, margin=dict(t=5,b=5,l=5,r=5),
+                             height=220, paper_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_e, use_container_width=True)
 
-    # Tabela IBGE
     st.markdown("---")
-    st.markdown(f'<div style="font-size:1.1rem; font-weight:800; color:{COR_TEXTO}; margin-bottom:8px;">📊 Dados IBGE/Censo 2022</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="font-size:1.05rem;font-weight:800;color:{COR_TEXTO};margin-bottom:6px;">'
+                f'📊 Dados IBGE / Censo 2022</div>', unsafe_allow_html=True)
 
     if not df_distrito.empty:
-        # Tenta montar a tabela diretamente da aba Distrito
         df_distrito.columns = df_distrito.columns.str.strip()
         st.dataframe(df_distrito, use_container_width=True, height=340)
     else:
-        # Fallback: monta a tabela a partir de Empresas
-        emp_por_dist = df.groupby("Distrito").size().reset_index(name="Na Amostra")
-        tabela_ibge = emp_por_dist.sort_values("Distrito")
-        total_row   = pd.DataFrame([{"Distrito": "Total", "Na Amostra": len(df)}])
-        tabela_ibge = pd.concat([tabela_ibge, total_row], ignore_index=True)
-        st.dataframe(tabela_ibge, use_container_width=True, height=340)
+        tab = (df.groupby("Distrito").size().reset_index(name="Na Amostra")
+                 .sort_values("Distrito"))
+        total = pd.DataFrame([{"Distrito":"Total","Na Amostra":len(df)}])
+        st.dataframe(pd.concat([tab, total], ignore_index=True),
+                     use_container_width=True, height=340)
 
-    st.markdown("""
-    <div style="font-size: 0.78rem; color: #666; margin-top: 8px;">
-    Os dados acima, exceto pela coluna NA AMOSTRA, foram obtidos cruzando dados da
-    <b>PREFEITURA DE SP, SEADE e OBSERVASAMPA</b>.<br>
-    Os dados de População Projetada para 2030 e 2050 usam como base o Censo 2010.
-    </div>
-    """, unsafe_allow_html=True)
+    st.caption("Os dados, exceto NA AMOSTRA, foram obtidos cruzando Prefeitura SP, SEADE e OBSERVASAMPA. "
+               "Populações projetadas usam o Censo 2010 como base.")
 
 
 # ─────────────────────────────────────────────
-# SIDEBAR + NAVEGAÇÃO
+# SIDEBAR
 # ─────────────────────────────────────────────
 def render_sidebar(df):
+    logo_meta_b64 = img_to_base64(LOGO_META) if LOGO_META else ""
     with st.sidebar:
+        if logo_meta_b64:
+            st.markdown(
+                f'<div style="text-align:center;padding:10px 0 4px 0;">'
+                f'<img src="{logo_meta_b64}" style="width:90px;height:90px;'
+                f'object-fit:contain;border-radius:50%;"></div>',
+                unsafe_allow_html=True,
+            )
         st.markdown("""
-        <div style="text-align:center; padding: 10px 0 20px 0;">
-            <div style="font-size:2.5rem;">🏢</div>
-            <div style="font-size:1.1rem; font-weight:800; letter-spacing:1px;">METADAY 2025</div>
-            <div style="font-size:0.8rem; opacity:0.7;">Fatec Sebrae · Ciência de Dados</div>
+        <div style="text-align:center;padding:0 0 14px 0;">
+            <div style="font-size:1.05rem;font-weight:800;letter-spacing:1px;">METADAY 2025</div>
+            <div style="font-size:0.75rem;opacity:0.7;">Fatec Sebrae · Ciência de Dados</div>
         </div>
         """, unsafe_allow_html=True)
-
         st.markdown("---")
 
         pagina = st.radio(
@@ -705,32 +762,26 @@ def render_sidebar(df):
                 "5 · Distritos por Segmento",
                 "6 · Dados IBGE / Perfil",
             ],
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
-
         st.markdown("---")
         st.markdown("**🔍 Filtros Globais**")
 
-        # Filtro de Distrito
-        distritos = sorted(df["Distrito"].dropna().unique().tolist())
-        distritos = [d for d in distritos if d not in ["Não informado", ""]]
-        sel_dist = st.multiselect("Distrito", distritos, default=distritos, key="filtro_distrito")
+        distritos = sorted([d for d in df["Distrito"].dropna().unique()
+                            if d not in ("Não informado","")])
+        sel_dist  = st.multiselect("Distrito", distritos, default=distritos)
 
-        # Filtro de Porte
-        portes = sorted(df["Porte"].dropna().unique().tolist())
-        portes = [p for p in portes if p not in ["Não informado", ""]]
-        sel_porte = st.multiselect("Porte", portes, default=portes, key="filtro_porte")
+        portes    = sorted([p for p in df["Porte"].dropna().unique()
+                            if p not in ("Não informado","")])
+        sel_porte = st.multiselect("Porte", portes, default=portes)
 
-        # Filtro de Presença Digital
-        sel_pres = st.multiselect(
-            "Presença Digital",
-            ["SIM", "NÃO"],
-            default=["SIM", "NÃO"],
-            key="filtro_pres"
-        )
-
+        sel_pres  = st.multiselect("Presença Digital", ["SIM","NÃO"],
+                                   default=["SIM","NÃO"])
         st.markdown("---")
-        st.caption(f"Total filtrado: **{len(df):,}** empresas")
+        n_filt = len(df[df["Distrito"].isin(sel_dist) &
+                        df["Porte"].isin(sel_porte) &
+                        df["Presenca_Digital"].isin(sel_pres)])
+        st.caption(f"Total filtrado: **{n_filt:,}** empresas")
 
     return pagina, sel_dist, sel_porte, sel_pres
 
@@ -739,45 +790,46 @@ def render_sidebar(df):
 # MAIN
 # ─────────────────────────────────────────────
 def main():
-    # Upload do Excel
-    with st.sidebar:
-        st.markdown("**📂 Dados**")
-        arquivo = st.file_uploader("Carregar planilha Excel", type=["xlsx", "xls"],
-                                   label_visibility="collapsed")
+    # 1) Tenta encontrar Excel automaticamente na pasta
+    caminho_auto = encontrar_excel()
 
-    if arquivo is None:
+    if caminho_auto:
+        df_raw, df_distrito = carregar_dados(caminho_auto)
+    else:
+        # 2) Fallback: upload manual (oculto por padrão via CSS, aparece só se necessário)
         st.markdown('<h1 class="titulo-principal">Segmento: EMPRESAS</h1>', unsafe_allow_html=True)
-        st.markdown('<hr class="divisor">', unsafe_allow_html=True)
-        st.info("👈 Faça upload da planilha Excel com os dados para iniciar o dashboard.")
-        st.markdown("""
-        **Abas esperadas no Excel:**
-        - `Empresas` — tabela principal
-        - `Ramo`, `Sub-Ramos`, `Ramo Principal` — hierarquia de atividades
-        - `Bairros`, `Distrito` — dados geográficos e IBGE
-        - `Porte`, `Horario` — tabelas auxiliares
-        """)
-        return
+        st.info("📂 Nenhum arquivo Excel encontrado na pasta do app. "
+                "Coloque o `.xlsx` na mesma pasta que o `app.py` **ou** faça upload abaixo.")
+        # Remove o display:none do uploader para esta situação
+        st.markdown("<style>div[data-testid='stFileUploader']{display:block!important;}</style>",
+                    unsafe_allow_html=True)
+        arquivo = st.file_uploader("Carregar planilha Excel", type=["xlsx","xls"])
+        if arquivo is None:
+            st.stop()
+        df_raw, df_distrito = carregar_dados(arquivo)
 
-    df_raw, df_distrito = carregar_dados(arquivo)
-
-    # Aplica filtros globais
+    # 3) Sidebar + filtros
     pagina, sel_dist, sel_porte, sel_pres = render_sidebar(df_raw)
 
     df = df_raw.copy()
-    if sel_dist:
-        df = df[df["Distrito"].isin(sel_dist)]
-    if sel_porte:
-        df = df[df["Porte"].isin(sel_porte)]
-    if sel_pres:
-        df = df[df["Presenca_Digital"].isin(sel_pres)]
+    if sel_dist:  df = df[df["Distrito"].isin(sel_dist)]
+    if sel_porte: df = df[df["Porte"].isin(sel_porte)]
+    if sel_pres:  df = df[df["Presenca_Digital"].isin(sel_pres)]
 
-    # Roteamento de páginas
-    if   pagina.startswith("1"): pagina_visao_geral(df, df_distrito)
-    elif pagina.startswith("2"): pagina_distritos(df)
-    elif pagina.startswith("3"): pagina_fatec(df)
-    elif pagina.startswith("4"): pagina_mapa_ramos(df)
-    elif pagina.startswith("5"): pagina_distritos_segmento(df)
-    elif pagina.startswith("6"): pagina_ibge(df, df_distrito)
+    # 4) Roteamento
+    rotas = {
+        "1": pagina_visao_geral,
+        "2": pagina_distritos,
+        "3": pagina_fatec,
+        "4": pagina_mapa_ramos,
+        "5": pagina_distritos_segmento,
+        "6": pagina_ibge,
+    }
+    n = pagina[0]
+    if n in ("1","6"):
+        rotas[n](df, df_distrito)
+    else:
+        rotas[n](df)
 
 
 if __name__ == "__main__":
