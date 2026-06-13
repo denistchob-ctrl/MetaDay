@@ -1,0 +1,165 @@
+RAMO_ID;SUB-RAMO_ID;Descricao;CNAE
+1;1;Produtos Importados (Alimentícios);01/06/4729
+2;2;Aço;01/02/4672
+3;3;Artigos para Laboratórios;4646-0/01
+4;3;Produtos Médicos;4646-0/01
+5;4;Artigos Hospitalares;4646-0/02
+6;5;Tecidos;01/09/4641
+7;6;Componentes Eletrônicos;4617-6/00
+8;6;Fios, Tecidos e afins;4617-6/00
+9;6;Redirecionadora de Importação;4618-4/99
+10;7;Armarinhos;4781-4/00
+11;7;Bolsas;4781-4/00
+12;7;Cabides;4781-4/00
+13;7;Calçados;4781-4/00
+14;7;Celulares;01/02/4751
+15;7;Colchões;02/07/4754
+16;7;Fogão e Peças para Fogão;01/07/4754
+17;7;Gravatas;4781-4/00
+18;7;Manequins;4781-4/00
+19;7;Ótica;4774-1/00
+20;7;Pedras, Jóias e Semijóias;4781-4/00
+21;7;Relógios;4781-4/00
+22;7;Sacaria;4781-4/00
+23;7;Sistema de Aquecimento;01/02/4751
+24;8;Molduras;4759-8/99
+25;8;Presentes;4789-0/99
+26;8;Produtos para Artesanato;4789-0/99
+27;8;Produtos para Festas;4789-0/99
+28;9;Ar Condicionado;4753-9/00
+29;9;Refrigeração;4753-9/00
+30;10;e-Esportes;4761-0/99
+31;10;Esportes;01/06/4763
+32;10;Instrumentos Musicais;4753-9/00
+33;10;Produtos Audiovisuais (DVD / CD / DISCOS);4761-0/01
+34;10;Produtos para Cinema;4761-0/99
+35;11;Produtos para Piscinas;4759-8/99
+36;12;Bombas;4744-0/99
+37;12;Decoração;03/08/4759
+38;12;Elétrica e Iluminação;4744-0/02
+39;12;Ferragens;4744-0/01
+40;12;Ferramentas;4744-0/03
+41;12;Filtros;4744-0/99
+42;12;Material de Construção;4744-0/01
+43;6;Rolamentos;
+44;12;Pintura;4744-0/04
+45;13;Papelaria e Materiais de Escritório;4761-0/03
+46;14;Acessórios;4781-4/00
+47;14;Brechó;4781-4/00
+48;14;Chapelaria;4781-4/00
+49;14;Produtos de Beleza;4772-5/00
+50;14;Roupas Femininas;4781-4/00
+51;14;Roupas Infantis;4781-4/00
+52;14;Roupas Íntimas;4781-4/00
+53;14;Roupas Masculinas;4781-4/00
+54;14;Todos os Segmentos;4781-4/00
+55;14;Uniformes;4781-4/00
+56;15;Moda Fitness;4781-4/00
+57;15;Moda Praia;4781-4/00
+58;16;Produtos Pet;4789-0/01
+59;16;Roupas Pet;4789-0/01
+60;17;Banca de Jornais;4761-0/04
+61;17;Livraria;4761-0/02
+63;17;Sebo;4761-0/02
+64;18;Equipamentos de Proteção;4759-8/99
+65;19;Componentes Eletrônicos e Robótica;01/02/4751
+66;19;Equipamentos Audiovisuais;01/02/4751
+67;20;Cozinha Industrial e Restaurantes;01/07/4754
+68;20;Eletrodomésticos;01/07/4754
+69;20;Embalagens e Produtos Plásticos;4789-0/99
+70;20;Essências;4789-0/99
+71;20;Fitas Adesivas;4789-0/99
+72;20;Móveis;02/07/4754
+73;20;Produtos de Limpeza;4789-0/99
+74;20;Variedades;4789-0/99
+75;21;Acessórios para Veículos;03/07/4530
+76;21;Concessionária de Veículos;01/01/4511
+77;21;Veículos Autopropelidos;01/01/4511
+78;22;Biblioteca;9102-3/00
+79;23;Energia Fotovoltaica;01/05/3511
+80;24;Agronegócio;6422-3/00
+81;24;Indústria Química;6422-3/00
+82;25;Alfaiataria;1412-0/00
+83;25;Etiquetas;1413-8/00
+84;25;Malharia;1421-1/00
+85;25;Fios e Tecidos;1311-2/00
+86;26;Bombas, Pistão e Ar Comprimido;2819-0/99
+87;26;Máquinas de Costura;2851-8/00
+88;26;Máquinas Gráficas;2829-1/99
+89;26;Mineirais e Metais Pesados;0729-4/99
+90;26;Peças para Fogão;2819-0/99
+91;26;Válvulas;2819-0/99
+93;27;Moldes;2229-3/99
+94;28;Fábrica de Material Odontológico;03/07/3250
+95;29;Dispositivos Médicos;02/07/3250
+96;30;Associação de Classe;9492-8/00
+97;31;Associação Cultural;9493-0/00
+98;32;Religiosa;9491-1/00
+99;33;Academia de Ginástica e Musculação;9311-5/00
+100;33;Artes Marciais;9311-5/00
+101;34;Depósitos/Storages;01/07/5211
+102;35;Arquitetura e Design de Interiores;7111-5/00
+103;35;Construtora;4120-4/00
+104;35;Engenharia;7112-3/00
+105;35;Pavimentação e Terraplanagem;4213-8/00
+106;36;Telemarketing;8220-0/01
+107;37;Agência de Publicidade;7311-4/00
+108;37;Marketing;7319-0/03
+109;37;Relações Públicas;7319-0/04
+110;38;Administração de Imóveis;01/08/6821
+111;38;Escritório Contábil;01/06/6920
+112;39;Gás;4671-4/00
+113;40;Editora;5811-5/00
+114;41;Consultoria;7020-4/00
+115;41;Empresa de Benefícios;7020-4/00
+116;41;Representante Comercial;4618-4/99
+117;42;Estacionamento;5221-4/00
+118;43;Privado;6423-1/00
+119;43;Público;6410-8/00
+120;43;Seguro;6511-1/00
+121;44;Gráfica Rápida;1813-0/01
+122;45;Escritório de Advocacia;01/07/6911
+123;45;Tabelião de Notas;6912-5/00
+124;47;Imobiliária;02/08/6821
+125;47;Outlet de Marcas;6822-6/00
+126;47;Shopping Center;6822-6/00
+127;48;Automóveis;4520-0/01
+128;48;Bicicletas;9529-1/99
+129;48;Borracharia;4520-0/07
+130;48;Chaveiro;01/01/9529
+131;48;Corte e Costura;02/01/9529
+132;48;Equipamentos Eletrodomésticos;9521-5/00
+133;48;Equipamento de Informática;9511-8/00
+134;48;Lava-Rápido;4520-0/05
+135;48;Mão de Obra Terceirizada;8129-0/00
+136;48;Motocicletas;4520-0/06
+137;48;Predial;8111-7/00
+138;48;Refrigeradores;9521-5/00
+139;48;Vistoria de Carros;7120-1/00
+140;49;Estadual;8411-6/00
+141;49;Federal;8412-4/00
+142;49;Municipal;8413-2/00
+143;50;Película Automotiva;4520-0/08
+144;50;Segurança Patrimonial;01/01/8011
+145;50;Vigilância;02/01/8011
+146;51;Automação Industrial;6209-1/00
+147;51;Call Center;8220-0/01
+148;51;Datacenter;6311-9/00
+149;51;Gestão Visual;6209-1/00
+150;51;Inteligência Artificial;6204-0/00
+151;51;Internet Via Satélite;6110-8/00
+152;51;Software;01/05/6201
+153;52;Telecomunicações e Fibra Ótica;01/08/6110
+154;53;Carretos;02/02/4930
+155;53;Guincho;5229-0/01
+156;53;Transportadora;01/02/4930
+157;54;Agência de Turismo;7911-2/00
+158;55;Distribuidor de Gás;4671-4/00
+159;55;Funerário;01/03/9603
+160;55;Posto de Combustível;4731-8/00
+161;56;Utilidades Domésticas;
+162;21;Motocicletas;01/01/4511
+163;20;Brinquedos;
+164;26;Lavadora de Peças;2819-0/99
+165;21;Bicicletas;
+166;53;Correios;
