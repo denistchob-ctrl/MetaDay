@@ -321,71 +321,86 @@ def carregar_dados(caminho):
 
 
 # ──────────────────────────────────────────────────────────────
-# FILTRO EM ÁRVORE  ←  replica o comportamento PBI
-#   Ramo Principal  (expander)
-#     ├─ Sub-Ramo A (expander dentro)
-#     │    ├─ ☑ Ramo 1
-#     │    └─ ☑ Ramo 2
-#     └─ Sub-Ramo B ...
-# Retorna lista de Ramo_Nome selecionados
+# FILTRO EM ÁRVORE  — replica o Power BI exatamente:
+#
+#  ⊞ □ Sub-Ramo A          ← expander com checkbox "selecionar todos"
+#       □ Especialização 1
+#       □ Especialização 2
+#  ⊟ □ Sub-Ramo B          ← expandido mostra filhos
+#       □ Especialização 3
+#
+# Retorna (ramos_nome_sel, sub_ramos_sel) onde:
+#   ramos_nome_sel = Ramo_Nome (especializações) individualmente marcadas
+#   sub_ramos_sel  = Sub_Ramos cujo checkbox-pai foi marcado (todos os filhos)
 # ──────────────────────────────────────────────────────────────
 def filtro_arvore(df: pd.DataFrame, key_prefix: str) -> list:
     """
-    Exibe hierarquia Ramo Principal → Sub-Ramo → Ramo (checkbox)
-    e retorna os Ramo_Nome marcados.
+    Árvore 2 níveis: Sub-Ramo (expansível) → Especialização/Tipo de Negócio (checkbox).
+    Retorna lista de Ramo_Nome selecionados para filtrar o dataframe.
     """
-    # Monta dicionário hierárquico
-    hierarquia: dict[str, dict[str, list]] = {}
-    for _, row in (df[["Ramo_Principal","Sub_Ramo","Ramo_Nome"]]
-                     .drop_duplicates()
-                     .sort_values(["Ramo_Principal","Sub_Ramo","Ramo_Nome"])
-                     .iterrows()):
-        rp  = str(row["Ramo_Principal"])
-        sr  = str(row["Sub_Ramo"])
-        rn  = str(row["Ramo_Nome"])
-        hierarquia.setdefault(rp, {}).setdefault(sr, [])
-        if rn not in hierarquia[rp][sr]:
-            hierarquia[rp][sr].append(rn)
+    # Monta dicionário  Sub-Ramo → [Especialização, ...]
+    tree: dict[str, list[str]] = {}
+    validos = df[["Sub_Ramo","Ramo_Nome"]].drop_duplicates()
+    validos = validos[
+        (validos["Sub_Ramo"]  != "Não informado") &
+        (validos["Ramo_Nome"] != "Não informado")
+    ].sort_values(["Sub_Ramo","Ramo_Nome"])
 
-    selecionados = []
+    for _, row in validos.iterrows():
+        sr = str(row["Sub_Ramo"])
+        rn = str(row["Ramo_Nome"])
+        tree.setdefault(sr, [])
+        if rn not in tree[sr]:
+            tree[sr].append(rn)
 
-    for rp, sub_dict in hierarquia.items():
-        with st.expander(f"☰ {rp}", expanded=False):
-            # "Selecionar todos" o Ramo Principal
-            tudo_rp = st.checkbox(
-                f"Todos — {rp}",
-                key=f"{key_prefix}_ALL_{rp}",
+    selecionados: list[str] = []
+
+    # CSS extra para simular o visual PBI (símbolo ⊞/⊟ + indentação)
+    st.markdown("""
+    <style>
+    /* Remove padding padrão dos expanders para aproximar do visual PBI */
+    div[data-testid="stExpander"] > details > summary {
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+        padding: 4px 6px !important;
+        color: #1A1A2E !important;
+    }
+    div[data-testid="stExpander"] > details {
+        border: none !important;
+        border-bottom: 1px solid #e0e0e0 !important;
+        box-shadow: none !important;
+    }
+    /* checkbox de especialização — indentado */
+    div[data-testid="stExpander"] .stCheckbox label {
+        font-size: 0.82rem !important;
+        padding-left: 12px !important;
+        color: #333 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    for sr in sorted(tree.keys()):
+        especializacoes = tree[sr]
+        # expander recolhido por padrão (⊞), expandido mostra filhos (⊟)
+        with st.expander(f"□  {sr}", expanded=False):
+            # checkbox "pai" — seleciona todos os filhos deste sub-ramo
+            tudo = st.checkbox(
+                f"Selecionar todos",
+                key=f"{key_prefix}_ALL_{sr}",
                 value=False,
             )
-            for sr, ramos in sub_dict.items():
-                st.markdown(f'<div class="tree-sub">＋ {sr}</div>', unsafe_allow_html=True)
-                for rn in ramos:
-                    marcado = st.checkbox(
-                        rn,
-                        key=f"{key_prefix}_{rp}_{sr}_{rn}",
-                        value=tudo_rp,
-                    )
-                    if marcado or tudo_rp:
-                        selecionados.append(rn)
+            for espec in especializacoes:
+                # chave sanitizada (sem caracteres problemáticos)
+                safe_key = f"{key_prefix}_{sr}_{espec}".replace(" ","_")[:120]
+                marcado = st.checkbox(
+                    espec,
+                    key=safe_key,
+                    value=tudo,
+                )
+                if marcado or tudo:
+                    selecionados.append(espec)
 
     return list(set(selecionados))
-
-
-# ──────────────────────────────────────────────────────────────
-# FILTRO PÁGINA 3: por Ramo Principal (checkbox simples, como PBI)
-# ──────────────────────────────────────────────────────────────
-def filtro_ramo_principal(df: pd.DataFrame, key_prefix: str) -> list:
-    """
-    Checkboxes de Ramo Principal (nível mais alto),
-    igual ao painel esquerdo da página 3 no Power BI.
-    """
-    ramos_princ = sorted([r for r in df["Ramo_Principal"].dropna().unique()
-                          if r != "Não informado"])
-    selecionados = []
-    for rp in ramos_princ:
-        if st.checkbox(rp, key=f"{key_prefix}_{rp}", value=False):
-            selecionados.append(rp)
-    return selecionados
 
 
 # ──────────────────────────────────────────────────────────────
@@ -609,36 +624,40 @@ def pagina_fatec(df):
     col_f, col_t = st.columns([1, 3])
 
     with col_f:
-        # ── Checkboxes de Ramo Principal (como no PBI) ─────────────
+        # ── Árvore Sub-Ramo → Especialização (igual PBI) ───────────
         st.markdown('<div class="section-title">Ramo de Atividade</div>', unsafe_allow_html=True)
-        ramos_princ = sorted([r for r in df["Ramo_Principal"].dropna().unique()
-                              if r != "Não informado"])
-        ramos_sel = []
-        for rp in ramos_princ:
-            if st.checkbox(rp, key=f"p3_rp_{rp}", value=False):
-                ramos_sel.append(rp)
+        espec_sel = filtro_arvore(df, key_prefix="p3")
 
     with col_t:
         st.markdown('<div class="section-title">Sub-Divisão dos Ramos de Atividade</div>',
                     unsafe_allow_html=True)
-        df_f = df[df["Ramo_Principal"].isin(ramos_sel)] if ramos_sel else df
-        sub_c = (df_f.groupby(["Ramo_Principal","Sub_Ramo","Ramo_Nome"])
+        # Filtra por especializações marcadas; sem seleção → mostra tudo
+        df_f = df[df["Ramo_Nome"].isin(espec_sel)] if espec_sel else df
+        sub_c = (df_f.groupby(["Sub_Ramo","Ramo_Nome"])
                       .size().reset_index(name="Qtde")
                       .query("Sub_Ramo != 'Não informado' and Qtde > 0"))
         if not sub_c.empty:
-            # Treemap 3 níveis: Ramo Principal → Sub-Ramo → Ramo (especialização)
-            fig_s = px.treemap(sub_c,
-                               path=["Ramo_Principal","Sub_Ramo","Ramo_Nome"],
-                               values="Qtde",
-                               color="Sub_Ramo",
-                               color_discrete_sequence=TREEMAP_COLORS)
-            fig_s.update_traces(textinfo="label+value", textfont_size=11,
-                                  textposition="bottom left")
-            fig_s.update_layout(height=390, margin=dict(t=5,b=5,l=5,r=5),
-                                  paper_bgcolor="rgba(0,0,0,0)")
+            # Treemap 2 níveis: Sub-Ramo → Especialização (sem Ramo Principal)
+            fig_s = px.treemap(
+                sub_c,
+                path=["Sub_Ramo","Ramo_Nome"],
+                values="Qtde",
+                color="Sub_Ramo",
+                color_discrete_sequence=TREEMAP_COLORS,
+            )
+            fig_s.update_traces(
+                textinfo="label+value",
+                textfont_size=11,
+                textposition="bottom left",
+            )
+            fig_s.update_layout(
+                height=390,
+                margin=dict(t=5,b=5,l=5,r=5),
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
             st.plotly_chart(fig_s, use_container_width=True)
         else:
-            st.info("Selecione um ou mais Ramos de Atividade para ver a sub-divisão.")
+            st.info("Selecione especializações no painel à esquerda para filtrar a sub-divisão.")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -649,13 +668,13 @@ def pagina_mapa_ramos(df):
     col_f, col_m = st.columns([1, 3])
 
     with col_f:
-        # ── Árvore: Sub-Ramo → Ramos (como no PBI) ─────────────────
+        # ── Árvore Sub-Ramo → Especialização (igual PBI) ───────────
         st.markdown('<div class="section-title">Segmentação dos Ramos</div>',
                     unsafe_allow_html=True)
-        ramos_sel = filtro_arvore(df, key_prefix="p4")
+        espec_sel = filtro_arvore(df, key_prefix="p4")
 
     with col_m:
-        df_f = df[df["Ramo_Nome"].isin(ramos_sel)] if ramos_sel else df
+        df_f = df[df["Ramo_Nome"].isin(espec_sel)] if espec_sel else df
         tem_coords = ("Lat" in df_f.columns and "Lon" in df_f.columns
                       and df_f["Lat"].notna().sum() > 5)
         if tem_coords:
@@ -693,13 +712,13 @@ def pagina_distritos_segmento(df):
     col_f, col_t = st.columns([1, 3])
 
     with col_f:
-        # ── Árvore: Sub-Ramo → Ramos (como no PBI) ─────────────────
+        # ── Árvore Sub-Ramo → Especialização (igual PBI) ───────────
         st.markdown('<div class="section-title">Segmentação dos Ramos</div>',
                     unsafe_allow_html=True)
-        ramos_sel = filtro_arvore(df, key_prefix="p5")
+        espec_sel = filtro_arvore(df, key_prefix="p5")
 
     with col_t:
-        df_f = df[df["Ramo_Nome"].isin(ramos_sel)] if ramos_sel else df
+        df_f = df[df["Ramo_Nome"].isin(espec_sel)] if espec_sel else df
         st.markdown('<div class="section-title">Distritos que têm os Segmentos selecionados</div>',
                     unsafe_allow_html=True)
         dist_c = df_f.groupby("Distrito").size().reset_index(name="Qtde")
